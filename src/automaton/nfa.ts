@@ -3,6 +3,19 @@ import { uid } from "uid";
 // Symbol -- One character input
 
 class NFAState {
+
+  toString() {
+    const str = `{${Object.entries(this._inputTransitions).map(([ key, value ]) => {
+      return `${key}: ${value}`;
+    }).join("\n")}}`;
+    return `{
+      id: ${this.id},
+      isEnd: ${this.isEnd},
+      _epsilonTransitions: [${this.epsilonTransitions.map(v => v.toString()).join(",")}],
+      inputTransit: ${str},
+    }`;
+  }
+
   get epsilonTransitions(): NFAState[] {
     return this._epsilonTransitions;
   }
@@ -21,7 +34,7 @@ class NFAState {
 
   constructor(
     private _isEnd = false,
-    private id = uid()
+    readonly id = uid()
   ) {
   }
 
@@ -42,9 +55,21 @@ class NFAState {
     return result;
   }
 
+  findById(id: string): NFAState {
+    const result = this._findCondition(s => s.id === id, {});
+    if (!result) {
+      throw new Error("ID should exist");
+    }
+    return result;
+  }
+
   // 捜査の途中プロセスでは、循環を回避するために途中で探査を中止し、nullを返すこともある
   private _findEnd(visits: { [ K: string ]: boolean }): NFAState | null {
-    if (this._isEnd) {
+    return this._findCondition((state) => state._isEnd, visits);
+  }
+
+  private _findCondition(condition: (state: NFAState) => boolean, visits: { [ K: string ]: boolean }): NFAState | null {
+    if (condition(this)) {
       return this;
     }
     if (visits[ this.id ]) return null;
@@ -52,7 +77,7 @@ class NFAState {
 
     // 最初に発見したEndを返す
     for (const s of this.nextStates()) {
-      const end = s._findEnd(visits);
+      const end = s._findCondition(condition, visits);
       if (end) {
         return end;
       }
@@ -98,8 +123,17 @@ class NFAState {
 
 class NFA {
   private start: NFAState;
+  // epsilonで移動前のstateリスト
+  private currents: NFAState[] = [];
 
-  private get end() {
+  toString() {
+    return `
+      start: ${this.start.toString()},
+      currents: [${this.currents.map(s => s.toString()).join(",")}]
+    `;
+  }
+
+  get end() {
     return this.start.findEnd();
   }
 
@@ -116,22 +150,61 @@ class NFA {
       const start = new NFAState();
       const end = new NFAState(true);
       start.setTransition(input, end);
+      this.start = start;
+      this.currents = [ this.start ];
     }
   }
 
 
   concat(nfa: NFA) {
-    const a = this.deepCopy()
-    const b = nfa.deepCopy()
-    a.end.isEnd = false
-    a.end.setTransition("", b.start)
-    a.end.inputTransitions
-  }
-  private deepCopy() {
-    const copy = new NFA()
-    copy.start = this.start.deepCopy()
-    return copy
+    const a = this.deepCopy();
+    const b = nfa.deepCopy();
+    const end = a.end;
+    end.isEnd = false;
+    end.setTransition("", b.start);
+    return a;
   }
 
+  private get currentMovables() {
+    const currentStates: NFAState[] = [];
+    const visits: { [ K: string ]: boolean } = {};
+    this.currents.forEach(current => {
+      if (visits[ current.id ]) return;
+      visits[ current.id ] = true;
+      currentStates.push(current);
+      current.epsilonTransitions.forEach(s => {
+        if (visits[ s.id ]) return;
+        visits[ s.id ] = true;
+        currentStates.push(s);
+      });
+    });
+    return currentStates;
+  }
+
+  transit(input: string) {
+    const nexts: NFAState[] = [];
+    const visits: { [ K: string ]: boolean } = {};
+    this.currentMovables.forEach(current => {
+      const next = current.inputTransitions[ input ];
+      if (next && !visits[ next.id ]) {
+        visits[ next.id ] = true;
+        nexts.push(next);
+      }
+    });
+    this.currents = nexts;
+  }
+
+  private deepCopy() {
+    const copy = new NFA();
+    copy.start = this.start.deepCopy();
+    copy.currents = this.currents.map(s => copy.start.findById(s.id));
+    return copy;
+  }
 }
 
+const a = new NFA("a");
+const b = new NFA("b");
+const ab = a.concat(b);
+ab.transit("a");
+ab.transit("b");
+console.log(ab.toString());
